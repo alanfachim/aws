@@ -1,0 +1,342 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: SASKV5N VPC
+
+# This VPC stack should be created first before any other
+# CloudFormation stacks, such as a bastion stack, database
+# stack and application stack
+Parameters:
+
+  AvailabilityZone1:
+    Description: The first availability zone in the region
+    Type: AWS::EC2::AvailabilityZone::Name
+    ConstraintDescription: Must be a valid availability zone
+
+  AvailabilityZone2:
+    Description: The second availability zone in the region
+    Type: AWS::EC2::AvailabilityZone::Name
+    ConstraintDescription: Must be a valid availability zone
+ 
+  SingleNatGateway:
+    Description: Set to true to only install one NAT gateway
+    Type: String
+    ConstraintDescription: Value must be true or false
+    Default: true
+    AllowedValues:
+      - true
+      - false
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Region Availability Zones
+        Parameters:
+          - AvailabilityZone1
+          - AvailabilityZone2
+      - Label:
+          default: Ingress Ports
+        Parameters:
+          - ELBIngressPort
+          - AppIngressPort
+    ParameterLabels:
+      AvailabilityZone1:
+        default: Availability Zone 1
+      AvailabilityZone2:
+        default: Availability Zone 2
+      ELBIngressPort:
+        default: Load Balancer Port
+      AppIngressPort:
+        default: Application Port
+
+Conditions:
+  CreateSingleNatGateway: !Equals [ !Ref SingleNatGateway, true ]
+  CreateMultipleNatGateways: !Not [ Condition: CreateSingleNatGateway ]
+
+Mappings:
+
+  # Maps CIDR blocks to VPC and various subnets
+  CIDRMap:
+    VPC:
+      CIDR: 10.50.0.0/16
+    Public1:
+      CIDR: 10.50.0.0/24
+    Public2:
+      CIDR: 10.50.1.0/24
+    Private1:
+      CIDR: 10.50.64.0/19
+    Private2:
+      CIDR: 10.50.96.0/19
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !FindInMap [CIDRMap, VPC, CIDR]
+      EnableDnsSupport: true
+      EnableDnsHostnames: true 
+  
+  myRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref myRouteTable
+      SubnetId: !Ref PrivateSubnet1
+      
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref myRouteTable
+      SubnetId: !Ref PrivateSubnet2
+ 
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [ CIDRMap, Private1, CIDR ]
+      AvailabilityZone: !Ref AvailabilityZone1 
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [ CIDRMap, Private2, CIDR ]
+      AvailabilityZone: !Ref AvailabilityZone2 
+     
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable access from ELB to app
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: tcp
+        ToPort: 80
+        FromPort: 80
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: tcp
+        ToPort: 443
+        FromPort: 443
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: udp
+        ToPort: 123
+        FromPort: 123 
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: tcp
+        ToPort: 3306
+        FromPort: 3306
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: tcp
+        ToPort: 5432
+        FromPort: 5432 
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: tcp
+        ToPort: 27017
+        FromPort: 27017  
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: tcp
+        ToPort: 6379
+        FromPort: 6379  
+
+
+  S3Endpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties: 
+      RouteTableIds:
+        - !Ref myRouteTable 
+      VpcEndpointType: Gateway 
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcId: !Ref VPC
+      
+  DynamoEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties: 
+      RouteTableIds:
+        - !Ref myRouteTable 
+      VpcEndpointType: Gateway 
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+      VpcId: !Ref VPC
+      
+  SNSVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.sqs'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+       
+  secretsmanager:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+  autoscaling:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:  
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.autoscaling'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+  logs:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:  
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+  ecrdkr:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:  
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC      
+      
+
+  ecstelemetry:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:  
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecs-telemetry'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+
+  ecs:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:  
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecs'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+      
+  cloudformation:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:   
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.cloudformation'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+  ecsagent:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:  
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecs-agent'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+  s3:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:  
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+  ecrapi:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:  
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !GetAtt AppSecurityGroup.GroupId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api'
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+ 
+    
+     
+Outputs: 
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcID"
+
+  VpcCidr:
+    Description: Vpc cidr block
+    Value: !FindInMap [ CIDRMap, VPC, CIDR ]
+    Export:
+      Name: !Sub "${AWS::StackName}-vpc-cidr"
+
+ 
+  PrivateSubnet1:
+    Description: Private subnet 1 ID
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet1"
+
+  PrivateSubnet2:
+    Description: Private subnet 2 ID
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet2" 
+      
+  AppSecurityGroup:
+    Description: Security group ID for app behind ELB
+    Value: !GetAtt AppSecurityGroup.GroupId
+    Export:
+      Name: !Sub "${AWS::StackName}-AppSecurityGroup"
+    
