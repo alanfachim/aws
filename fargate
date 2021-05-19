@@ -1,0 +1,21 @@
+Service:
+    Type: AWS::ECS::Service
+    DependsOn: LoadBalancerRule
+    Properties:
+      ServiceName: !Ref 'ServiceName'
+      Cluster:
+        Fn::ImportValue: !Sub ${EnvironmentName}:ClusterName
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref 'DesiredCount'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub ${EnvironmentName}:ContainerSecurityGroup
+          Subnets:
+            - Fn::ImportValue: !Sub ${EnvironmentName}:PrivateSubnetOne
+            - Fn::ImportValue: !Sub ${EnvironmentName}:PrivateSubnetTwo
+      TaskDefinition: !Ref 'TaskDefinition'
