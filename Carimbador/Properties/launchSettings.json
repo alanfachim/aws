@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Carimbador": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "URIRedis": "localhost"
+      }
+    }
+  }
+}

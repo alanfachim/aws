@@ -3,11 +3,11 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
-using Amazon.SQS;
-using Amazon.SQS.Model;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using StackExchange.Redis;
+using Confluent.Kafka;
+using System;
 
 namespace Testes
 {
@@ -17,7 +17,8 @@ namespace Testes
         public Mock<AmazonDynamoDBClient> MockDynamoDb { get; private set; }
         public Mock<IDatabase> MockRedisR { get; private set; }
         public Mock<IDatabase> MockRedisW { get; private set; }
-        public Mock<AmazonSQSClient> MockSQS { get; private set; }
+        public Mock<IProducer<string, string>> MockKafkaProducer { get; private set; }
+        public Mock<IConsumer<string, string>> MockKafkaConsumer { get; private set; }
         public UnitTest1()
         {
             MockDynamoDb = new Mock<AmazonDynamoDBClient>();
@@ -37,11 +38,29 @@ namespace Testes
             {
                 return Task.FromResult((RedisValue)"");
             });
-            MockSQS = new Mock<AmazonSQSClient>();
-            object r = MockSQS.Setup(q => q.ReceiveMessageAsync(It.IsAny<string>(), default)).Returns(() =>
+            MockKafkaProducer = new Mock<IProducer<string, string>>();
+            object r = MockKafkaProducer.Setup(q => q.ProduceAsync(It.IsAny<string>(), It.IsAny<Message<string, string>>(), default)).Returns(() =>
             {
-                var result = new ReceiveMessageResponse();
+                var result = new DeliveryResult<string, string>();
                 return Task.FromResult(result);
+            });
+            MockKafkaConsumer = new Mock<IConsumer<string, string>>();
+            object u = MockKafkaConsumer.Setup(q => q.Consume(It.IsAny<int>())).Returns(() =>
+            {
+                var result = new ConsumeResult<string, string>();
+                System.Threading.Thread.Sleep(10000);
+                result.Message = new Message<string, string>() { Key = "", 
+                    Value = @"{     
+                                'cod_produto':'0001',
+	                            'carencia':1,
+	                            'database':	20210505,
+	                            'vencimento':2105012,
+	                            'parametros':{
+                                    '1':{ 'value':'1'},
+		                            '2':{ 'value':'1'}
+                                 }
+                             }" };
+                return result;
             });
 
         }
@@ -66,9 +85,19 @@ namespace Testes
         }
 
         [TestMethod]
+        public void Processar()
+        {
+            Environment.SetEnvironmentVariable("URIRedis", "localhost");
+            Negocio data = new Negocio();
+            data.consumidor = MockKafkaConsumer.Object;
+            data.produtor = MockKafkaProducer.Object;
+            data.Processar(); 
+        }
+
+        [TestMethod]
         public void binarySerachRange()
         {
-            DAO data = new DAO(MockDynamoDb.Object, MockRedisR.Object, MockRedisW.Object, MockSQS.Object);
+            DAO data = new DAO(MockDynamoDb.Object, MockRedisR.Object, MockRedisW.Object);
             List<Dictionary<string, object>> obj = new List<Dictionary<string, object>>(){
                 new Dictionary<string, object>() { { "chave", 1 } },
                 new Dictionary<string, object>() { { "chave", 1 }, { "atributo","teste" } },
@@ -102,23 +131,17 @@ namespace Testes
         [TestMethod]
         public void getGrupParameters()
         {
-            DAO data = new DAO(MockDynamoDb.Object, MockRedisR.Object, MockRedisW.Object, MockSQS.Object);
+            DAO data = new DAO(MockDynamoDb.Object, MockRedisR.Object, MockRedisW.Object);
             //data.getGrupParameters("0001",null);
         }
 
         [TestMethod]
         public void buscaRegras()
         {
-            DAO data = new DAO(MockDynamoDb.Object, MockRedisR.Object, MockRedisW.Object, MockSQS.Object);
+            DAO data = new DAO(MockDynamoDb.Object, MockRedisR.Object, MockRedisW.Object);
             //data.buscaRegras();
         }
 
-        [TestMethod]
-        public void Processar()
-        {
-            DAO data = new DAO(MockDynamoDb.Object, MockRedisR.Object, MockRedisW.Object, MockSQS.Object);
-            //data.Processar();
-        }
 
     }
 }

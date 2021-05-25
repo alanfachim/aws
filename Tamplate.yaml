@@ -56,6 +56,7 @@ Resources:
   ECSTaskDefinition: 
     Type: AWS::ECS::TaskDefinition
     DependsOn:
+    
       - tasksRole
     Properties:  
       ExecutionRoleArn:
@@ -84,6 +85,45 @@ Resources:
           Memory: 512
           Essential: true
   
+  TestCluster:
+    Type: 'AWS::MSK::Cluster'
+    Properties:
+      ClusterName: ClusterWithAllProperties
+      KafkaVersion: 2.6.1
+      NumberOfBrokerNodes: 2
+      EnhancedMonitoring: PER_BROKER
+      EncryptionInfo: 
+        EncryptionInTransit:
+          ClientBroker: TLS
+          InCluster: true
+      OpenMonitoring:
+        Prometheus:
+          JmxExporter:
+            EnabledInBroker: "true"
+          NodeExporter:
+            EnabledInBroker: "true" 
+      ClientAuthentication:
+        Sasl: 
+          Scram: 
+            Enabled:
+              "true"
+      Tags:
+        Environment: Test
+        Owner: QATeam
+      BrokerNodeGroupInfo:
+        BrokerAZDistribution: DEFAULT
+        InstanceType: kafka.t3.small
+        SecurityGroups:
+          - Fn::ImportValue: 
+              !Sub "${vpcStack}-AppSecurityGroup"
+        StorageInfo:
+          EBSStorageInfo:
+            VolumeSize: 80
+        ClientSubnets:
+          - Fn::ImportValue:  
+              !Sub "${vpcStack}-PrivateSubnet1"
+          - Fn::ImportValue:  
+              !Sub "${vpcStack}-PrivateSubnet2"   
         
   ECSAutoScalingGroup:
     DependsOn: ECSCluster
