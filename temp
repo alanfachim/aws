@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  lambda-nodejs12.x 
+Globals:
+  Function:
+    Timeout: 3
+
+Resources: 
+  LoginJwt:
+    Type: AWS::Serverless::Function  
+    Properties:
+      FunctionName: kafka_writer
+      CodeUri: ./
+      Handler: ./index.handler
+      Runtime: nodejs12.x
+      Events:
+        PutMessages:
+          Type: Api 
+          Properties: 
+            Path: /write
+            Method: post
